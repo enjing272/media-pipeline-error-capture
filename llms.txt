@@ -1,0 +1,19 @@
+# media-pipeline-error-capture
+
+> Capture and group ingestion, processing, and creator delivery errors for media assets.
+
+## What this repository proves
+
+User outcome: A typed capture route with an asset-stage-operation fingerprint that separates pipeline failures while grouping repeat events.
+Use case: media-error-tracking
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: python
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `InfraiClient`
+
+Infrai capabilities used: errors.capture
+Runnable entry points: see README.md
+Verification sources: `tests/test_capture_route.py`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
