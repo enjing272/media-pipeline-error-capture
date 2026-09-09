@@ -6,7 +6,7 @@ export INFRAI_API_KEY="your-key"
 python -m src.capture_route
 ```
 
-A video can enter cleanly, fail during transcoding, and then hit a separate delivery problem. This service keeps those incidents apart while folding repeat failures from the same asset step into one useful group. It sends plain REST requests to Infrai, so there is no SDK to install and one key is enough for this capture path.
+A video might pass ingestion fine, then blow up in transcoding, and later stall on delivery. We keep those failures separate but collapse repeated errors from the same asset and step into a single group. The worker just makes a plain REST call to Infrai, so there's no SDK to wire up and one key handles this capture path.
 
 ## The request a worker sends
 
@@ -37,27 +37,27 @@ The expected local response is:
 }
 ```
 
-The route accepts three stages: `ingestion`, `processing`, and `delivery`. The fingerprint combines `asset_id`, `stage`, and `operation`. Two transcode exceptions for `asset-42` therefore meet in the same group, while a delivery exception for that asset remains separate. That is the business decision covered by the tests.
+The route takes three stages: `ingestion`, `processing`, and `delivery`. Grouping uses a fingerprint built from `asset_id`, `stage`, and `operation`. So two transcode errors for `asset-42` land in one group, while a delivery error for that same asset stays apart. That split is what the test suite guards.
 
 ## The copyable capture boundary
 
-`src/infrai_client.py` calls `POST /v1/errors/capture` with an explicit method and Bearer credential from `INFRAI_API_KEY`. It decodes the `{ok, data, error, metadata}` envelope before considering HTTP status, surfaces ordinary API rejections as `InfraiError`, and retries HTTP 429 with `Retry-After` or exponential delay. The worker's `event_id` becomes `Idempotency-Key`, so retrying the write identifies the same event.
+`src/infrai_client.py` calls `POST /v1/errors/capture` with an explicit method and Bearer credential from `INFRAI_API_KEY`. The one real gotcha: decode the `{ok, data, error, metadata}` envelope before you look at HTTP status, or you'll misclassify API rejections. Normal API errors surface as `InfraiError`, and HTTP 429 gets a retry with `Retry-After` or exponential delay. The worker's `event_id` maps to `Idempotency-Key`, so a retried write still identifies the same event.
 
-The route maps client-side API rejections back to a 4xx response and reserves 502 for upstream transport-class failures. Successful capture returns 202 because the worker's exception has been accepted for grouping; the original media job can then follow its own retry or dead-letter policy.
+The route turns client-side API rejections into 4xx and keeps 502 only for upstream transport failures. Capture returns 202 because the exception is accepted for grouping; the media job can follow its own retry or dead-letter plan.
 
 ## Verify the grouping rule
 
-The focused test sends two processing events with different event IDs but the same asset, stage, and operation. Both produce `["asset-42", "processing", "transcode"]`; a delivery event produces a different fingerprint.
+The focused test fires two processing events with different event IDs but identical asset, stage, and operation. Both yield `["asset-42", "processing", "transcode"]`; a delivery event gets a different fingerprint.
 
 ```bash
 python -m pytest -q
 ```
 
-This example stops at capture. Your media queue remains responsible for job retry and asset state, while Infrai receives the structured exception and grouping context.
+This sample ends at capture. Your media queue still owns job retry and asset state, while Infrai gets the structured exception and grouping context.
 
 ## Before this ships: Media Pipeline Error Capture
 
-The code stays simple on purpose — here's what to set up before going live: The details below apply to Media Pipeline Error Capture.
+We keep the code intentionally small. Here's what to configure before production: The notes below apply to Media Pipeline Error Capture.
 
 **Account & key**
 
