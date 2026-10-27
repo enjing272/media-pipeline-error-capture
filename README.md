@@ -6,11 +6,11 @@ export INFRAI_API_KEY="your-key"
 python -m src.capture_route
 ```
 
-A video might pass ingestion fine, then blow up in transcoding, and later stall on delivery. We keep those failures separate but collapse repeated errors from the same asset and step into a single group. The worker just makes a plain REST call to Infrai, so there's no SDK to wire up and one key handles this capture path.
+In a Next.js media app, a worker can fail at more than one stage. I've seen a video pass ingest, crash in transcode, then hit a separate delivery fault. This service keeps those incidents distinct but folds repeat failures from the same asset step into a single group. It posts plain REST calls to Infrai, so there's no SDK to install and one key is enough for this capture path.
 
 ## The request a worker sends
 
-Post the worker's exception to the local route:
+A worker posts its exception to our local route:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/capture-media-error \
@@ -27,7 +27,7 @@ curl --request POST http://127.0.0.1:8000/capture-media-error \
   }'
 ```
 
-The expected local response is:
+The route answers with:
 
 ```json
 {
@@ -37,27 +37,27 @@ The expected local response is:
 }
 ```
 
-The route takes three stages: `ingestion`, `processing`, and `delivery`. Grouping uses a fingerprint built from `asset_id`, `stage`, and `operation`. So two transcode errors for `asset-42` land in one group, while a delivery error for that same asset stays apart. That split is what the test suite guards.
+We accept three stages: `ingestion`, `processing`, and `delivery`. The fingerprint mixes `asset_id`, `stage`, and `operation`. Two transcode exceptions for `asset-42` therefore meet in one group, while a delivery exception for that asset stays separate. That's the business rule the tests lock in.
 
 ## The copyable capture boundary
 
-`src/infrai_client.py` calls `POST /v1/errors/capture` with an explicit method and Bearer credential from `INFRAI_API_KEY`. The one real gotcha: decode the `{ok, data, error, metadata}` envelope before you look at HTTP status, or you'll misclassify API rejections. Normal API errors surface as `InfraiError`, and HTTP 429 gets a retry with `Retry-After` or exponential delay. The worker's `event_id` maps to `Idempotency-Key`, so a retried write still identifies the same event.
+`src/infrai_client.py` calls `POST /v1/errors/capture` with an explicit method and a Bearer credential from `INFRAI_API_KEY`. The one real gotcha: you must decode the `{ok, data, error, metadata}` envelope before you look at HTTP status. Skip that and a 200 with an error body slips through. Ordinary API rejections surface as `InfraiError`, and HTTP 429 retries with `Retry-After` or exponential delay. The worker's `event_id` becomes `Idempotency-Key`, so retrying the write identifies the same event.
 
-The route turns client-side API rejections into 4xx and keeps 502 only for upstream transport failures. Capture returns 202 because the exception is accepted for grouping; the media job can follow its own retry or dead-letter plan.
+The route maps client-side API rejections back to a 4xx and reserves 502 for upstream transport failures. Capture returns 202 because the exception is accepted for grouping; the original media job then runs its own retry or dead-letter policy.
 
 ## Verify the grouping rule
 
-The focused test fires two processing events with different event IDs but identical asset, stage, and operation. Both yield `["asset-42", "processing", "transcode"]`; a delivery event gets a different fingerprint.
+The focused test sends two processing events with different event IDs but the same asset, stage, and operation. Both produce `["asset-42", "processing", "transcode"]`; a delivery event produces a different fingerprint.
 
 ```bash
 python -m pytest -q
 ```
 
-This sample ends at capture. Your media queue still owns job retry and asset state, while Infrai gets the structured exception and grouping context.
+This example stops at capture. Your media queue stays responsible for job retry and asset state, while Infrai receives the structured exception and grouping context.
 
 ## Before this ships: Media Pipeline Error Capture
 
-We keep the code intentionally small. Here's what to configure before production: The notes below apply to Media Pipeline Error Capture.
+The code stays simple on purpose. Here's what to set before going live: the details below apply to Media Pipeline Error Capture.
 
 **Account & key**
 
